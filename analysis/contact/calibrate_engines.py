@@ -58,19 +58,8 @@ def keff_pybullet(param):
         cid = p.connect(p.DIRECT)
     p.setGravity(0, 0, -9.81, physicsClientId=cid)
     p.setTimeStep(CAL_DT, physicsClientId=cid)
-    import os
-    os.makedirs("/tmp/xengine", exist_ok=True)
-    open("/tmp/xengine/arm.urdf", "w").write(X.URDF)
-    open("/tmp/xengine/pad.urdf", "w").write(X.PAD_URDF)
-    arm = p.loadURDF("/tmp/xengine/arm.urdf", [0, 0, 0],
-                     useFixedBase=True, physicsClientId=cid)
-    pad = p.loadURDF("/tmp/xengine/pad.urdf", X.PAD_POS,
-                     useFixedBase=True, physicsClientId=cid)
     damp = 2 * np.sqrt(param * 0.45)
-    for body, link in [(arm, 0), (pad, -1)]:
-        p.changeDynamics(body, link, lateralFriction=X.MU,
-                         contactStiffness=param, contactDamping=damp,
-                         physicsClientId=cid)
+    arm, pad = X.load_pybullet_scene(p, cid, param, damp)
     p.resetJointState(arm, 0, 0.125, 0.0, physicsClientId=cid)
     p.setJointMotorControl2(arm, 0, p.VELOCITY_CONTROL, force=X.J_FRIC,
                             physicsClientId=cid)

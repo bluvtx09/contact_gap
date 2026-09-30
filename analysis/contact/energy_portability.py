@@ -44,16 +44,7 @@ def pb(v0, dt=DT):
         cid = p.connect(p.DIRECT)
     p.setGravity(0, 0, -9.81, physicsClientId=cid)
     p.setTimeStep(dt, physicsClientId=cid)
-    os.makedirs("/tmp/xengine", exist_ok=True)
-    open("/tmp/xengine/arm.urdf", "w").write(X.URDF)
-    open("/tmp/xengine/pad.urdf", "w").write(X.PAD_URDF)
-    arm = p.loadURDF("/tmp/xengine/arm.urdf", [0, 0, 0],
-                     useFixedBase=True, physicsClientId=cid)
-    pad = p.loadURDF("/tmp/xengine/pad.urdf", X.PAD_POS,
-                     useFixedBase=True, physicsClientId=cid)
-    p.changeDynamics(arm, 0, lateralFriction=0.55, jointDamping=0.02,
-                     physicsClientId=cid)
-    p.changeDynamics(pad, -1, lateralFriction=0.55, physicsClientId=cid)
+    arm, pad = X.load_pybullet_scene(p, cid, joint_damping=0.02)
     p.resetJointState(arm, 0, Q0, v0, physicsClientId=cid)
     p.setJointMotorControl2(arm, 0, p.VELOCITY_CONTROL, force=0.010,
                             physicsClientId=cid)
@@ -126,8 +117,10 @@ def main():
     print(f"\n에너지 퍼짐: {min(sp):.2f} ~ {max(sp):.2f}배")
     print("\n지표별 엔진 간 퍼짐 비교")
     print(f"  흡수 에너지  {min(sp):.2f} ~ {max(sp):.2f}배")
-    print("  충격량       1.08 ~ 1.17배")
-    print("  최대 접촉력  7.4  ~ 13.0배")
+    before = X.uncalibrated_values()
+    bi, bp = X.spread_range(before, 1), X.spread_range(before, 0)
+    print(f"  충격량       {bi[0]:.2f} ~ {bi[1]:.2f}배")
+    print(f"  최대 접촉력  {bp[0]:.1f}  ~ {bp[1]:.1f}배")
     print("\n표준이 쓰는 양이 가장 잘 옮겨지고,")
     print("실무가 재는 양이 가장 안 옮겨진다.")
 

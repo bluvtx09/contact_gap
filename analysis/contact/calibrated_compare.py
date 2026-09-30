@@ -8,9 +8,16 @@
 같은 비교를 다시 한다.
 """
 
+import os
+import sys
+
 import numpy as np
 
-CAL = {"MuJoCo": 1166.0, "PyBullet": 2.286e5, "Drake": 2.001e5}
+sys.path.insert(0, os.path.dirname(__file__))
+import cross_engine as X  # noqa: E402
+
+# 정적 정합값 (calibrate_engines.py 출력). PyBullet 값은 설정 함정 수정 전후로 다르다.
+CAL = {"MuJoCo": 1166.0, "PyBullet": 2.286e5 if X.PYBULLET_LEGACY else 2.301e5, "Drake": 2.001e5}
 V0S = [3.0, 6.0, 9.0, 12.0, 15.0]
 DTS = [0.0004, 0.0002, 0.0001, 0.00005]
 LIMIT = 140.0
@@ -19,13 +26,7 @@ HOLD_TAU = 0.30
 Q_START = 0.1250
 MJ_SOLIMP = "0.9 0.95 0.001"
 
-# 정합 전 값 (3차 교차 검증에서 측정)
-BEFORE_PK = {3.0: (48.7, 467.5, 148.4), 6.0: (97.5, 1186.3, 348.6),
-             9.0: (150.4, 1500.7, 797.0), 12.0: (201.2, 1498.3, 834.4),
-             15.0: (249.9, 3238.1, 1816.9)}
-BEFORE_IM = {3.0: (0.463, 0.430, 0.466), 6.0: (0.624, 0.568, 0.614),
-             9.0: (0.802, 0.693, 0.779), 12.0: (0.969, 0.831, 0.920),
-             15.0: (1.138, 0.978, 1.124)}
+# 정합 전 값은 cross_engine.uncalibrated_values() 로 매번 다시 계산한다.
 
 
 def run_mj(v0, dt):
@@ -92,6 +93,7 @@ def main():
     print(f"{'':>5}  {'MuJoCo':>9}{'PyBullet':>10}{'Drake':>9}"
           f"  {'전':>6}{'후':>6}   {'전':>6}{'후':>6}")
     print("-" * 76)
+    before = X.uncalibrated_values()
     sp_pk, sp_im = [], []
     verdicts = 0
     for v0 in V0S:
@@ -100,8 +102,8 @@ def main():
             pk, f = fn(v0, 0.0002)
             pks.append(pk)
             ims.append(float(f.sum() * 0.0002))
-        a, b = spread(BEFORE_PK[v0]), spread(pks)
-        c, d = spread(BEFORE_IM[v0]), spread(ims)
+        a, b = spread(before[v0][0]), spread(pks)
+        c, d = spread(before[v0][1]), spread(ims)
         sp_pk.append(b)
         sp_im.append(d)
         vs = [x <= LIMIT for x in pks]
@@ -109,11 +111,17 @@ def main():
         print(f"{v0:5.1f}  {pks[0]:9.1f}{pks[1]:10.1f}{pks[2]:9.1f}"
               f"  {a:5.1f}x{b:5.1f}x   {c:5.2f}x{d:5.2f}x")
     print("-" * 76)
+    bp, bi = X.spread_range(before, 0), X.spread_range(before, 1)
     print(f"\n정합 후 최대력 퍼짐: {min(sp_pk):.1f} ~ {max(sp_pk):.1f}배"
-          f"   (정합 전 7.4 ~ 13.0배)")
+          f"   (정합 전 {bp[0]:.1f} ~ {bp[1]:.1f}배)")
     print(f"정합 후 충격량 퍼짐: {min(sp_im):.2f} ~ {max(sp_im):.2f}배"
-          f"   (정합 전 1.08 ~ 1.17배)")
+          f"   (정합 전 {bi[0]:.2f} ~ {bi[1]:.2f}배)")
     print(f"\n안전 판정이 갈린 조건: {verdicts}/{len(V0S)}  (정합 전 2/5)")
+
+
+def static_spreads(dt=0.0002):
+    """정적 정합 후 엔진 간 최대력 퍼짐 {v0: 배수} (impact_calibrate.py가 비교 기준으로 씀)."""
+    return {v0: spread([fn(v0, dt)[0] for _, fn in ENGINES]) for v0 in V0S}
 
 
 if __name__ == "__main__":
