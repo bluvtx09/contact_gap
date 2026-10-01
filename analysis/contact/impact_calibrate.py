@@ -54,18 +54,7 @@ def pen_pybullet(k, v0=REF_V0, dt=0.0002):
         cid = p.connect(p.DIRECT)
     p.setGravity(0, 0, -9.81, physicsClientId=cid)
     p.setTimeStep(dt, physicsClientId=cid)
-    os.makedirs("/tmp/xengine", exist_ok=True)
-    open("/tmp/xengine/arm.urdf", "w").write(X.URDF)
-    open("/tmp/xengine/pad.urdf", "w").write(X.PAD_URDF)
-    arm = p.loadURDF("/tmp/xengine/arm.urdf", [0, 0, 0],
-                     useFixedBase=True, physicsClientId=cid)
-    pad = p.loadURDF("/tmp/xengine/pad.urdf", X.PAD_POS,
-                     useFixedBase=True, physicsClientId=cid)
-    for body, link in [(arm, 0), (pad, -1)]:
-        p.changeDynamics(body, link, lateralFriction=X.MU,
-                         contactStiffness=k,
-                         contactDamping=2 * np.sqrt(k * 0.45),
-                         physicsClientId=cid)
+    arm, pad = X.load_pybullet_scene(p, cid, k, 2 * np.sqrt(k * 0.45))
     p.resetJointState(arm, 0, Q_START, v0, physicsClientId=cid)
     p.setJointMotorControl2(arm, 0, p.VELOCITY_CONTROL, force=X.J_FRIC,
                             physicsClientId=cid)
@@ -160,23 +149,29 @@ def main():
     print(f"{'':>5}  {'MuJoCo':>9}{'PyBullet':>10}{'Drake':>9}"
           f"   {'정합없음':>9}{'정적정합':>9}{'충돌정합':>9}")
     print("-" * 76)
-    BEFORE = {3.0: 9.6, 6.0: 12.2, 9.0: 10.0, 12.0: 7.4, 15.0: 13.0}
-    STATIC = {3.0: 40.5, 6.0: 49.7, 9.0: 53.7, 12.0: 1.9, 15.0: 1.4}
-    sp, dis = [], 0
+    import cross_engine as X
+    import calibrated_compare as CC
+    BEFORE = {v0: max(v[0]) / min(v[0]) for v0, v in X.uncalibrated_values().items()}
+    STATIC = CC.static_spreads()
+    sp, sp_im, dis = [], [], 0
     for v0 in V0S:
-        pks = []
+        pks, ims = [], []
         for name, fn in PROBES:
-            _, fmax, _, _ = fn(cal[name], v0=v0)
+            _, fmax, fs, _ = fn(cal[name], v0=v0)
             pks.append(fmax)
+            ims.append(float(np.sum(fs)) * 0.0002)   # 세 프로브 모두 dt 0.2 ms
         s = max(pks) / min(pks)
         sp.append(s)
+        sp_im.append(max(ims) / min(ims))
         vs = [x <= LIMIT for x in pks]
         dis += len(set(vs)) > 1
         print(f"{v0:5.1f}  {pks[0]:9.1f}{pks[1]:10.1f}{pks[2]:9.1f}"
               f"   {BEFORE[v0]:8.1f}x{STATIC[v0]:8.1f}x{s:8.1f}x")
     print("-" * 76)
     print(f"\n충돌정합 후 퍼짐: {min(sp):.1f} ~ {max(sp):.1f}배")
-    print(f"  (정합없음 7.4~13.0배, 정적정합 1.4~53.7배)")
+    print(f"충돌정합 후 충격량 퍼짐: {min(sp_im):.2f} ~ {max(sp_im):.2f}배")
+    print(f"  (정합없음 {min(BEFORE.values()):.1f}~{max(BEFORE.values()):.1f}배, "
+          f"정적정합 {min(STATIC.values()):.1f}~{max(STATIC.values()):.1f}배)")
     print(f"\n안전 판정이 갈린 조건: {dis}/{len(V0S)}")
 
 

@@ -1,7 +1,7 @@
 # Phase C — 접촉 갭 성분 분해
 
 **접촉 안전 검증에 쓰이는 최대 접촉력은 엔진 간 7~13배 갈리고
-적분 간격에 따라 최대 +676% 변한다. 반면 ISO 표준 자신이 유도에 쓰는
+적분 간격에 따라 최대 +709% 변한다. 반면 ISO 표준 자신이 유도에 쓰는
 흡수 에너지는 세 엔진에서 1.02배 안에 들어온다.**
 
 로봇이 사람이나 물체에 닿는 순간의 sim-to-real 갭을 성분별로 분해한다.
@@ -19,6 +19,7 @@ python analysis/contact/iso_criterion.py        # 발견 12    즉시
 
 ```bash
 python analysis/contact/energy_portability.py   # 발견 13    약 5분
+python analysis/contact/convergence_check.py    # 발견 15    약 1분
 python analysis/contact/cross_engine.py         # 발견 5~7   약 15분
 python analysis/contact/compliant_tip.py        # 발견 10~11 약 20분
 python analysis/contact/calibrate_engines.py    # 정적 정합  약 10분
@@ -41,8 +42,8 @@ python analysis/contact/impact_calibrate.py     # 발견 8~9   약 25분
 | 2 | 시뮬은 "안전", 실물은 문턱 초과인 구간이 존재한다. 책임의 96.8%가 접촉강성 하나에 있다 |
 | 3 | 지배 성분 순위가 접촉 유형에 따라 통째로 바뀐다. 충돌→접촉강성, 지속압박→액추에이터 손실 |
 | 4 | 궤적 RMS 갭은 센서 노이즈에 잠긴다. 같은 데이터에서 최대력은 3.5~27배 신호가 살아있다 |
-| 5 | 3개 엔진 5개 설정 중 4개에서 최대 접촉력이 시간간격에 대해 발산한다 (+48~676%) |
-| 6 | 충격량은 엔진 간 8~17%로 일치하고 간격에 대해서도 수렴한다. 최대력은 7~13배 벌어진다 |
+| 5 | 3개 엔진 5개 설정 중 4개에서 최대 접촉력이 시간간격에 대해 발산한다 (+48~709%) |
+| 6 | 충격량은 엔진 간 9~19%로 일치하고 간격에 대해서도 수렴한다. 최대력은 7~13배 벌어진다 |
 | 7 | 엔진을 바꾸면 5개 조건 중 2개에서 안전 판정이 갈린다 |
 | 8 | 정적 관측량으로 정합하면 충돌에서 팔이 패드를 뚫고 지나간다 (400배 밖 외삽) |
 | 9 | 충돌 영역에서 정합해도 최대력이 2~8배 갈린다. 정합은 차이를 없애지 않고 옮긴다 |
@@ -50,18 +51,21 @@ python analysis/contact/impact_calibrate.py     # 발견 8~9   약 25분
 | 11 | 그러나 시뮬 신뢰도는 안 오른다. 시뮬은 경고를 내기 전에 관통이탈로 먼저 무효가 된다 |
 | 12 | ISO 표준의 해석해가 시뮬 측정과 13% 안에서 맞는다 — 시뮬레이터 없이 |
 | 13 | 흡수 에너지는 엔진 간 1.02배로 일치. 표준이 쓰는 양이 가장 잘 옮겨진다 |
+| 14 | PyBullet 설정 함정 3개(링크 감쇠, URDF 관성, 마찰 곱)를 고쳐도 결론은 유지된다. 숫자는 수정 후 값 |
+| 15 | 수렴 판정은 dt/4까지 세 값의 폭이 dt/8까지 양 끝 변화율보다 낫다 (90/90 대 87/90) |
 
 자세한 해석: [`findings/contact-gap-first-findings.md`](findings/contact-gap-first-findings.md)
 
 ## 절차서 Phase C
 
-자유 운동용 규칙 8개에 접촉용 규칙 14개를 더했다.
+자유 운동용 규칙 8개에 접촉용 규칙 15개를 더했다.
 전부 실제로 겪은 실패에서 역산했다.
 
 - 규칙 9~15: 접촉 유형 축, 중력 분리, 안전 지표 분리, 과소/과대 구분,
   거짓 안전 탐색, 피크 아티팩트 검증, 지표별 노이즈 바닥
 - 규칙 16~18: 최대력 수렴 확인, 엔진 간 비교는 충격량, 판정 이식성 확인
 - 규칙 19~22: 정합 관측량 명시, 스윕 경계 검사, 문턱 출처 명시, 준수 입증은 에너지로
+- 규칙 23: 비교 전 엔진 설정 점검 (PyBullet 감쇠·관성·마찰 곱)
 
 [`protocol/PROTOCOL-v0-phaseC.md`](protocol/PROTOCOL-v0-phaseC.md)
 
@@ -84,6 +88,7 @@ analysis/contact/
   safety_attribution.py      안전 판정의 성분별 책임 귀속
   regime_compare.py          접촉 유형별 순위 비교
   metric_disagreement.py     RMS 순위 vs 안전 순위 대조
+  convergence_check.py       수렴 판정 기준 3종 비교 (발견 15)
 findings/                    발견 해석
 protocol/                    Phase C 절차서
 ```

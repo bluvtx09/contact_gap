@@ -81,6 +81,42 @@ PAD_URDF = f"""<?xml version="1.0"?>
 """
 
 
+# --- PyBullet 장면 구성 --------------------------------------------------
+# simdiff-check(PB001~PB003)이 찾은 PyBullet 설정 함정 세 가지를 고쳐서 불러온다.
+#   PB001 링크 감쇠 기본값 0.04 → 0
+#   PB002 loadURDF가 URDF 관성을 무시하고 충돌 모양에서 다시 계산 → URDF_USE_INERTIA_FROM_FILE
+#   PB003 PyBullet은 두 물체 마찰을 곱한다 (0.55 x 0.55 = 0.30) → 패드 1.0, 팔 MU (MuJoCo는 큰 값 0.55)
+# CG_PYBULLET_LEGACY=1 이면 수정 전 설정으로 돌린다 (이전 숫자 재현용).
+PYBULLET_LEGACY = os.environ.get("CG_PYBULLET_LEGACY") == "1"
+
+
+def load_pybullet_scene(p, cid, contact_stiffness=None, contact_damping=None,
+                        joint_damping=None, legacy=None):
+    """팔과 패드를 불러오고 공통 접촉 설정을 적용한다. (arm, pad)를 돌려준다."""
+    legacy = PYBULLET_LEGACY if legacy is None else legacy
+    d = f"/tmp/xengine/{os.getpid()}"   # 프로세스별 폴더 (병렬 실행 시 파일 충돌 방지)
+    os.makedirs(d, exist_ok=True)
+    open(f"{d}/arm.urdf", "w").write(URDF)
+    open(f"{d}/pad.urdf", "w").write(PAD_URDF)
+    flags = 0 if legacy else p.URDF_USE_INERTIA_FROM_FILE
+    arm = p.loadURDF(f"{d}/arm.urdf", [0, 0, 0], useFixedBase=True,
+                     flags=flags, physicsClientId=cid)
+    pad = p.loadURDF(f"{d}/pad.urdf", PAD_POS, useFixedBase=True,
+                     flags=flags, physicsClientId=cid)
+    contact = {} if contact_stiffness is None else dict(
+        contactStiffness=contact_stiffness, contactDamping=contact_damping)
+    arm_kw = dict(lateralFriction=MU, **contact)
+    if joint_damping is not None:
+        arm_kw["jointDamping"] = joint_damping
+    p.changeDynamics(arm, 0, physicsClientId=cid, **arm_kw)
+    p.changeDynamics(pad, -1, lateralFriction=MU if legacy else 1.0,
+                     physicsClientId=cid, **contact)
+    if not legacy:
+        p.changeDynamics(arm, -1, linearDamping=0, angularDamping=0,
+                         physicsClientId=cid)
+    return arm, pad
+
+
 def run_pybullet(v0, contact_stiffness=None, contact_damping=None, dt=None):
     import pybullet as p
     dt = dt or DT
@@ -90,25 +126,8 @@ def run_pybullet(v0, contact_stiffness=None, contact_damping=None, dt=None):
     p.setGravity(0, 0, -9.81, physicsClientId=cid)
     p.setTimeStep(dt, physicsClientId=cid)
 
-    d = "/tmp/xengine"
-    os.makedirs(d, exist_ok=True)
-    open(f"{d}/arm.urdf", "w").write(URDF)
-    open(f"{d}/pad.urdf", "w").write(PAD_URDF)
-
-    arm = p.loadURDF(f"{d}/arm.urdf", [0, 0, 0], useFixedBase=True,
-                     physicsClientId=cid)
-    pad = p.loadURDF(f"{d}/pad.urdf", PAD_POS, useFixedBase=True,
-                     physicsClientId=cid)
-
-    kw = dict(lateralFriction=MU, jointDamping=J_DAMP)
-    if contact_stiffness is not None:
-        kw.update(contactStiffness=contact_stiffness,
-                  contactDamping=contact_damping)
-    p.changeDynamics(arm, 0, physicsClientId=cid, **kw)
-    p.changeDynamics(pad, -1, lateralFriction=MU, physicsClientId=cid,
-                     **({} if contact_stiffness is None else
-                        dict(contactStiffness=contact_stiffness,
-                             contactDamping=contact_damping)))
+    arm, pad = load_pybullet_scene(p, cid, contact_stiffness, contact_damping,
+                                   joint_damping=J_DAMP)
 
     p.resetJointState(arm, 0, Q_START, v0, physicsClientId=cid)
     p.setJointMotorControl2(arm, 0, p.VELOCITY_CONTROL, force=J_FRIC,
@@ -161,9 +180,42 @@ ENGINES = [
 # 비교용 대표 설정 (엔진당 하나)
 MAIN = [ENGINES[0], ENGINES[1], ENGINES[3]]
 
+
+_UNCAL = {}
+
+
+def uncalibrated_values(dt=0.0002):
+    """정합 전 대표 설정(MAIN)의 최대력·충격량. {v0: ((최대력 x3), (충격량 x3))}.
+
+    다른 스크립트가 '정합 전' 기준값을 손으로 옮겨 적지 않고 여기서 다시 계산한다.
+    (예전에는 숫자를 복사해 두어, 설정을 바꿔도 비교 기준이 갱신되지 않았다.)
+    """
+    if dt not in _UNCAL:
+        out = {}
+        for v0 in V0S:
+            pks, ims = [], []
+            for _, fn in MAIN:
+                pk, f = fn(v0, dt)
+                pks.append(pk)
+                ims.append(impulse(f, dt))
+            out[v0] = (tuple(pks), tuple(ims))
+        _UNCAL[dt] = out
+    return _UNCAL[dt]
+
+
+def spread_range(values_by_v0, k):
+    """values_by_v0[v0][k] 의 엔진 간 퍼짐(최대/최소)의 (최소, 최대)."""
+    s = [max(v[k]) / min(v[k]) for v in values_by_v0.values()]
+    return min(s), max(s)
+
 DTS = [0.0004, 0.0002, 0.0001, 0.00005]
 V0S = [3.0, 6.0, 9.0, 12.0, 15.0]
 LIMIT = 140.0
+
+
+def spread3(vals):
+    """(최대-최소)/|최대| — 규칙 16의 수렴 판정량."""
+    return (max(vals) - min(vals)) / max(abs(v) for v in vals)
 
 
 def convergence():
@@ -184,14 +236,18 @@ def convergence():
         a, b = rows[0], rows[-1]
         dpk = (b[1] / a[1] - 1) * 100
         dim = (b[2] / a[2] - 1) * 100
-        verdict[name] = (dpk, dim)
-        print(f"{'':<19}{'변화율':>10}{dpk:+9.0f}%{dim:+11.0f}%")
+        # 규칙 16 (개정): dt, dt/2, dt/4 세 값의 폭이 최댓값의 10% 이하일 때만 수렴
+        spk = spread3([r[1] for r in rows[:3]])
+        sim = spread3([r[2] for r in rows[:3]])
+        verdict[name] = (spk, sim)
+        print(f"{'':<19}{'변화율':>10}{dpk:+9.0f}%{dim:+11.0f}%   (dt/8까지 양 끝)")
+        print(f"{'':<19}{'폭':>10}{spk * 100:9.0f}%{sim * 100:11.0f}%   (dt/4까지 세 값)")
         print()
     print("-" * 74)
-    print("\n판정 (변화율 10% 이내를 수렴으로 봄):")
-    for name, (dpk, dim) in verdict.items():
-        print(f"  {name:<19} 최대력 {'수렴' if abs(dpk) < 10 else '발산':<4}"
-              f"   충격량 {'수렴' if abs(dim) < 10 else '발산'}")
+    print("\n판정 (규칙 16: dt~dt/4 세 값의 폭이 10% 이하면 수렴):")
+    for name, (spk, sim) in verdict.items():
+        print(f"  {name:<19} 최대력 {'수렴' if spk <= 0.10 else '발산':<4}"
+              f"   충격량 {'수렴' if sim <= 0.10 else '발산'}")
 
 
 def spread():
